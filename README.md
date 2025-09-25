@@ -36,7 +36,7 @@ Erweitert für **Python 3**, **JSON-sichere Dumps**, **verschlüsselte Wallets**
 brew install berkeley-db@5
 
 # 2) Projekt holen
-git clone https://github.com/DEIN-USER/pywallet.git
+git clone https://github.com/morningstarnasser/pywallet_3.12.git
 cd pywallet
 
 # 3) Virtuelle Umgebung
