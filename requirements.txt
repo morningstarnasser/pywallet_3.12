@@ -1,0 +1,10 @@
+# Core runtime deps
+bsddb3>=6.2.9        # Berkeley DB (Python bindings)
+ecdsa>=0.18.0        # secp256k1 ops
+simplejson>=3.19.2   # faster JSON (falls back to stdlib json)
+
+# Optional: faster AES (preferred if available)
+pycryptodome>=3.20.0
+
+# Tests / tooling (optional)
+# pytest>=8.0.0
