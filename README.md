@@ -31,8 +31,6 @@ Erweitert für **Python 3**, **JSON-sichere Dumps**, **verschlüsselte Wallets**
 
 ## Installation
 
-### macOS
-
 ```bash
 # 1) Homebrew: Berkeley DB bereitstellen (empfohlen v5 auf macOS)
 brew install berkeley-db@5
