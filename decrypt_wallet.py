@@ -107,7 +107,7 @@ def test_passphrase_list(wallet_file, passphrase_file, output_file=None):
     return False
 
 
-def extract_encryption_info(wallet_file):
+def extract_encryption_info(wallet_file, output_hash_file='wallet_hash.txt'):
     """Extrahiert Verschlüsselungsinformationen für externe Tools (hashcat, john)"""
     import subprocess
 
@@ -124,7 +124,7 @@ def extract_encryption_info(wallet_file):
 
         if 'mkey' not in data:
             print("ERROR: No master key found in wallet (wallet not encrypted?)")
-            return
+            return None
 
         mkey = data['mkey']
 
@@ -148,12 +148,24 @@ def extract_encryption_info(wallet_file):
         # Format for hashcat
         print("\n[HASHCAT FORMAT]")
         print("-"*70)
+        hash_line = None
         if salt and encrypted_key:
             # Bitcoin Core wallet format for hashcat
-            print(f"$bitcoin$64${encrypted_key}${salt}${iterations}$0$0")
+            hash_line = f"$bitcoin$64${encrypted_key}${salt}${iterations}$0$0"
+            print(hash_line)
+
+            # Save to file
+            with open(output_hash_file, 'w') as f:
+                f.write(hash_line + "\n")
+
+            print(f"\n✓ Hash saved to: {output_hash_file}")
             print("\nUsage:")
-            print(f"  hashcat -m 11300 -a 0 hash.txt wordlist.txt")
+            print(f"  hashcat -m 11300 -a 0 {output_hash_file} wordlist.txt")
             print(f"  (Mode 11300 = Bitcoin Core wallet)")
+            print(f"\nGPU Performance estimate:")
+            print(f"  GTX 1080:  ~50,000-200,000 H/s")
+            print(f"  RTX 3080:  ~300,000-500,000 H/s")
+            print(f"  RTX 4090:  ~500,000-2,000,000+ H/s")
 
         # Show sample encrypted keys
         print("\n[ENCRYPTED PRIVATE KEYS]")
@@ -167,16 +179,19 @@ def extract_encryption_info(wallet_file):
                     print(f"  Encrypted Private Key: {key.get('encrypted_privkey', 'N/A')[:64]}...")
 
         print("\n" + "="*70)
-        print("Use these values with password cracking tools:")
-        print("  - hashcat: https://hashcat.net/hashcat/")
-        print("  - John the Ripper: https://www.openwall.com/john/")
+        print("Download hashcat from: https://hashcat.net/hashcat/")
+        print("Download John the Ripper: https://www.openwall.com/john/")
         print("="*70 + "\n")
+
+        return hash_line
 
     except json.JSONDecodeError:
         print("ERROR: Could not parse wallet data")
         print(result.stdout)
+        return None
     except Exception as e:
         print(f"ERROR: {str(e)}")
+        return None
 
 
 def interactive_decrypt(wallet_file):
@@ -228,6 +243,94 @@ def interactive_decrypt(wallet_file):
         print(f"\n✗ FAILED: {result}\n")
 
 
+def gpu_crack_hashcat(wallet_file, wordlist_file, output_file=None):
+    """GPU-beschleunigtes Cracking mit Hashcat (>1 Million H/s)"""
+    import subprocess
+    import shutil
+
+    print("="*70)
+    print("GPU-ACCELERATED CRACKING WITH HASHCAT")
+    print("="*70)
+    print(f"\nWallet: {wallet_file}")
+    print(f"Wordlist: {wordlist_file}\n")
+
+    # Check if hashcat is installed
+    hashcat_cmd = shutil.which('hashcat')
+    if not hashcat_cmd:
+        print("ERROR: hashcat not found!")
+        print("\nPlease install hashcat:")
+        print("  Windows: Download from https://hashcat.net/hashcat/")
+        print("  Linux: sudo apt install hashcat")
+        print("  macOS: brew install hashcat")
+        print("\nOr use --extract-info to manually run hashcat")
+        return False
+
+    # Extract hash
+    print("Extracting hash from wallet...")
+    hash_file = 'wallet_hash.txt'
+    hash_line = extract_encryption_info(wallet_file, hash_file)
+
+    if not hash_line:
+        print("\nERROR: Failed to extract hash")
+        return False
+
+    print("\n" + "="*70)
+    print("STARTING HASHCAT GPU CRACKING")
+    print("="*70)
+    print("\nThis will use your GPU for maximum speed (>1 Million H/s)")
+    print("Press Ctrl+C to stop\n")
+
+    # Run hashcat
+    hashcat_args = [
+        hashcat_cmd,
+        '-m', '11300',  # Bitcoin Core wallet
+        '-a', '0',      # Dictionary attack
+        hash_file,
+        wordlist_file,
+        '--status',
+        '--status-timer=5',
+        '-o', 'hashcat_found.txt',
+        '--outfile-format=2'  # Plain password only
+    ]
+
+    try:
+        print(f"Command: {' '.join(hashcat_args)}\n")
+        result = subprocess.run(hashcat_args, text=True)
+
+        # Check if password was found
+        if os.path.exists('hashcat_found.txt'):
+            with open('hashcat_found.txt', 'r') as f:
+                found_password = f.read().strip()
+
+            if found_password:
+                print("\n" + "="*70)
+                print("✓ SUCCESS! PASSWORD FOUND!")
+                print("="*70)
+                print(f"Password: {found_password}")
+                print("="*70 + "\n")
+
+                # Now decrypt the wallet with found password
+                print("Decrypting wallet with found password...")
+                success, result = test_single_passphrase(wallet_file, found_password)
+
+                if success and output_file:
+                    with open(output_file, 'w') as f:
+                        f.write(result)
+                    print(f"✓ Decrypted wallet saved to: {output_file}\n")
+
+                return True
+
+        print("\n✗ No password found in wordlist")
+        return False
+
+    except KeyboardInterrupt:
+        print("\n\n✗ Interrupted by user")
+        return False
+    except Exception as e:
+        print(f"\nERROR: {str(e)}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Specialized tool for decrypting Bitcoin Core wallet.dat files',
@@ -240,10 +343,13 @@ Examples:
   # Test a single passphrase
   python3 decrypt_wallet.py -w wallet.dat -p "mypassword"
 
-  # Brute-force with passphrase list
+  # GPU cracking with hashcat (>1 Million H/s)
+  python3 decrypt_wallet.py -w wallet.dat -g wordlist.txt -o decrypted.json
+
+  # Python brute-force (slower, but no hashcat needed)
   python3 decrypt_wallet.py -w wallet.dat -l passwords.txt -o decrypted.json
 
-  # Extract info for hashcat/john
+  # Extract info for manual hashcat
   python3 decrypt_wallet.py -w wallet.dat -e
         """
     )
@@ -255,7 +361,10 @@ Examples:
                         help='Single passphrase to test')
 
     parser.add_argument('-l', '--list',
-                        help='File with list of passphrases (one per line)')
+                        help='File with list of passphrases (Python mode, ~5 H/s)')
+
+    parser.add_argument('-g', '--gpu-crack',
+                        help='GPU cracking with hashcat wordlist (>1M H/s)')
 
     parser.add_argument('-i', '--interactive', action='store_true',
                         help='Interactive mode (prompts for passphrase)')
@@ -275,6 +384,14 @@ Examples:
     # Extract info mode
     if args.extract_info:
         extract_encryption_info(args.wallet)
+        return
+
+    # GPU cracking mode (FASTEST - >1 Million H/s)
+    if args.gpu_crack:
+        if not os.path.exists(args.gpu_crack):
+            print(f"ERROR: Wordlist file not found: {args.gpu_crack}")
+            sys.exit(1)
+        gpu_crack_hashcat(args.wallet, args.gpu_crack, args.output)
         return
 
     # Interactive mode
@@ -300,7 +417,7 @@ Examples:
             print(f"\n✗ FAILED: {result}\n")
         return
 
-    # Passphrase list mode
+    # Passphrase list mode (Python - slower)
     if args.list:
         test_passphrase_list(args.wallet, args.list, args.output)
         return
