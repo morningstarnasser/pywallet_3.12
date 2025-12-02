@@ -44,10 +44,10 @@ missing_dep = []
 
 try:
     from bsddb3.db import *
-except:
+except ImportError:
     try:
         from bsddb.db import *
-    except:
+    except ImportError:
         missing_dep.append('bsddb')
 
 import os, sys, time, re
@@ -56,7 +56,7 @@ pyw_path = os.path.dirname(os.path.realpath(__file__))
 
 try:
     import simplejson as json
-except:
+except ImportError:
     import json
 
 import bisect
@@ -72,7 +72,9 @@ import types
 import string
 import hashlib
 import random
-import urllib
+import secrets
+import urllib.request
+import urllib.error
 import math
 import base64
 import collections
@@ -80,9 +82,9 @@ import weakref
 import binascii
 from types import MethodType
 import unittest
+import subprocess
 
 from datetime import datetime
-from subprocess import *
 
 import os
 import os.path
@@ -130,7 +132,9 @@ class Bdict(dict):
     def __repr__(self):
         return '%s(%s)'%(self.__class__.__name__, super(Bdict, self).__repr__())
 
-max_version = 81000
+# Increased max_version to support newer Bitcoin Core versions (up to ~200k)
+# Use --dont_check_walletversion to disable version check entirely
+max_version = 200000
 json_db = Bdict({})
 private_keys = []
 private_hex_keys = []
@@ -1030,13 +1034,13 @@ if crypter is None:
     try:
         from Crypto.Cipher import AES
         crypter = Crypter_pycrypto()
-    except:
+    except (ImportError, ModuleNotFoundError):
         try:
             import ctypes
             import ctypes.util
             ssl = ctypes.cdll.LoadLibrary (ctypes.util.find_library ('ssl') or 'libeay32')
             crypter = Crypter_ssl()
-        except:
+        except (ImportError, OSError, AttributeError):
             crypter = Crypter_pure()
             logging.warning("pycrypto or libssl not found, decryption may be slow")
 
@@ -1078,7 +1082,7 @@ try:
     randrange = random.SystemRandom().randrange
     secp256k1 = ecdsa.curves.Curve ( "secp256k1", curve_secp256k1, generator_secp256k1, (1, 3, 132, 0, 10) )
     ecdsa.curves.curves.append (secp256k1)
-except:
+except (ImportError, ModuleNotFoundError, AttributeError):
     missing_dep.append('ecdsa')
 
 # python-ecdsa code (EC_KEY implementation)
@@ -1508,7 +1512,7 @@ def parse_CAddress(vds):
         d['pchReserved'] = vds.read_bytes(12)
         d['ip'] = socket.inet_ntoa(vds.read_bytes(4))
         d['port'] = vds.read_uint16()
-    except:
+    except (SerializationError, struct.error, socket.error):
         pass
     return d
 
@@ -1555,7 +1559,7 @@ def overlapped_read(f, sz, overlap, maxlen=None):
 def search_patterns_on_disk(device, size, inc, patternlist):   # inc must be higher than 1k
     try:
         otype=os.O_RDONLY|os.O_BINARY
-    except:
+    except AttributeError:
         otype=os.O_RDONLY
     try:
         fd = os.open(device, otype)
@@ -1736,7 +1740,7 @@ def recov(device, passes, size=102400, inc=10240, outputdir='.'):
 
     try:
         otype=os.O_RDONLY|os.O_BINARY
-    except:
+    except AttributeError:
         otype=os.O_RDONLY
     fd = os.open(device, otype)
 
@@ -1818,6 +1822,7 @@ def recov(device, passes, size=102400, inc=10240, outputdir='.'):
                         sys.stdout.flush()
                     if failures_in_a_row>5:
                         break
+                    # Note: IV derived from public_key per Bitcoin Core wallet format
                     crypter.SetIV(Hash(ck.public_key))
                     secret = crypter.Decrypt(ck.encrypted_pk)
                     compressed = ck.public_key[0] != 0x04
@@ -1836,7 +1841,7 @@ def recov(device, passes, size=102400, inc=10240, outputdir='.'):
         tone=time.time()
         try:
             calcspeed=1.0*cpt//(tone-tzero)*60  #calc/min
-        except:
+        except (ZeroDivisionError, ArithmeticError):
             calcspeed=1.0
         if calcspeed==0:
             calcspeed=1.0
@@ -1868,6 +1873,7 @@ def recov(device, passes, size=102400, inc=10240, outputdir='.'):
                                 tl=sorted(tl, key=lambda x:x[0])
                                 if mk==tl[0][2]:
                                     continue         #because already tested
+                                # Note: IV derived from public_key per Bitcoin Core wallet format
                                 crypter.SetIV(Hash(ck.public_key))
                                 secret = crypter.Decrypt(ck.encrypted_pk)
                                 compressed = ck.public_key[0] != 0x04
@@ -1915,7 +1921,7 @@ def first_read(device, size, prekeys, inc=10000):
     t0 = ts()-1
     try:
         fd = os.open (device, os.O_RDONLY)
-    except:
+    except (OSError, IOError, PermissionError) as e:
         print("Can't open %s, check the path or try as root"%device)
         exit(0)
     prekey = prekeys[0]
@@ -2051,14 +2057,19 @@ def md5_2(a):
 
 def md5_file(nf):
     try:
-        fichier = file(nf, 'r').read()
-        return md5_2(fichier)
-    except:
+        with open(nf, 'r') as fichier:
+            return md5_2(fichier.read())
+    except (IOError, OSError) as e:
+        logging.warning("Could not read file %s: %s", nf, e)
         return 'zz'
 
 def md5_onlinefile(add):
-    page = urllib.urlopen(add).read()
-    return md5_2(page)
+    try:
+        page = urllib.request.urlopen(add).read()
+        return md5_2(page)
+    except (urllib.error.URLError, urllib.error.HTTPError) as e:
+        logging.error("Failed to fetch URL %s: %s", add, e)
+        return 'zz'
 
 
 class KEY:
@@ -2443,11 +2454,11 @@ def merge_wallets(wadir, wa, wbdir, wb, wrdir, wr, passphrase_a, passphrase_b, p
     for i in json_db['keys']:
         try:
             label=i['label']
-        except:
+        except KeyError:
             label="#Reserve"
         try:
             list_keys_a.append([i['secret'], label])
-        except:
+        except KeyError:
             pass
 
     if len(list_keys_a)==0:
@@ -2463,11 +2474,11 @@ def merge_wallets(wadir, wa, wbdir, wb, wrdir, wr, passphrase_a, passphrase_b, p
     for i in json_db['keys']:
         try:
             label=i['label']
-        except:
+        except KeyError:
             label="#Reserve"
         try:
             list_keys_b.append([i['secret'], label])
-        except:
+        except KeyError:
             pass
     if len(list_keys_b)==0:
         return [False, "Something went wrong with the second wallet."]
@@ -2485,7 +2496,7 @@ def merge_wallets(wadir, wa, wbdir, wb, wrdir, wr, passphrase_a, passphrase_b, p
 
     if len(passphrase_r)>0:
         NPP_salt=os.urandom(8)
-        NPP_rounds=int(50000+random.random()*20000)
+        NPP_rounds=50000 + secrets.randbelow(20001)  # Secure random: 50000-70000
         NPP_method=0
         NPP_MK=os.urandom(32)
 
@@ -2518,10 +2529,11 @@ def merge_wallets(wadir, wa, wbdir, wb, wrdir, wr, passphrase_a, passphrase_b, p
     return [True]
 
 def random_string(l, alph="0123456789abcdef"):
+    """Generate cryptographically secure random string."""
     r=""
     la=len(alph)
     for i in range(l):
-        r+=alph[int(la*(random.random()))]
+        r+=alph[secrets.randbelow(la)]
     return r
 
 def update_wallet(db, types, datas, paramsAreLists=False):
@@ -2723,7 +2735,7 @@ def read_wallet(json_db, db_env, walletfile, print_wallet, print_wallet_transact
                 d['public_key'] = vds.read_bytes(vds.read_compact_size())"""
             try:
                 json_db['pool'].append( {'n': d['n'], 'addr': public_key_to_bc_address(d['public_key']), 'addr2': public_key_to_bc_address(binascii.unhexlify(d['public_key'])), 'addr3': public_key_to_bc_address(binascii.hexlify(d['public_key'])), 'nTime' : d['nTime'], 'nVersion' : d['nVersion'], 'public_key_hex' : d['public_key'] } )
-            except:
+            except (ValueError, TypeError, binascii.Error):
                 json_db['pool'].append( {'n': d['n'], 'addr': public_key_to_bc_address(d['public_key']), 'nTime' : d['nTime'], 'nVersion' : d['nVersion'], 'public_key_hex' : binascii.hexlify(d['public_key']) } )
 
         elif type == b"acc":
@@ -2802,7 +2814,51 @@ def read_wallet(json_db, db_env, walletfile, print_wallet, print_wallet_transact
         print("The wallet is not encrypted")
 
     if crypted and not passphrase:
-        print("The wallet is encrypted but no passphrase is used")
+        print("\n" + "="*70)
+        print("WALLET IS ENCRYPTED - No passphrase provided")
+        print("="*70)
+        print("\nExtractable information WITHOUT passphrase:")
+        print("-" * 70)
+
+        # Show Master Key information
+        if 'mkey' in json_db and json_db['mkey']:
+            mkey = json_db['mkey']
+            print("\n[MASTER KEY ENCRYPTION INFO]")
+            if 'salt' in mkey:
+                print(f"  Salt: {binascii.hexlify(mkey['salt']).decode()}")
+            if 'nDerivationIterations' in mkey:
+                print(f"  Iterations (rounds): {mkey['nDerivationIterations']}")
+            if 'nDerivationMethod' in mkey:
+                print(f"  Derivation method: {mkey['nDerivationMethod']}")
+            if 'encrypted_key' in mkey:
+                print(f"  Encrypted master key: {binascii.hexlify(mkey['encrypted_key']).decode()}")
+                print(f"  Encrypted master key length: {len(mkey['encrypted_key'])} bytes")
+
+        # Show encrypted keys with public keys and addresses
+        encrypted_key_count = 0
+        sample_keys = []
+        for k in json_db['keys']:
+            if 'encrypted_privkey' in k:
+                encrypted_key_count += 1
+                if len(sample_keys) < 3:  # Show first 3 as samples
+                    sample_keys.append(k)
+
+        print(f"\n[ENCRYPTED PRIVATE KEYS]")
+        print(f"  Total encrypted keys found: {encrypted_key_count}")
+
+        # Show sample encrypted keys
+        if sample_keys:
+            print(f"\n  Sample encrypted keys (showing first {len(sample_keys)}):")
+            for i, k in enumerate(sample_keys, 1):
+                print(f"\n  Key #{i}:")
+                print(f"    Address: {k.get('addr', 'N/A')}")
+                print(f"    Public key: {k.get('pubkey', b'').decode() if isinstance(k.get('pubkey', b''), bytes) else k.get('pubkey', 'N/A')}")
+                print(f"    Encrypted private key: {k.get('encrypted_privkey', b'').decode() if isinstance(k.get('encrypted_privkey', b''), bytes) else k.get('encrypted_privkey', 'N/A')}")
+                print(f"    Compressed: {k.get('compressed', 'N/A')}")
+
+        print("\n  Note: Private keys are encrypted. Provide passphrase with --passphrase to decrypt.")
+        print("  Public keys and addresses are still available (see dump output).")
+        print("\n" + "="*70 + "\n")
 
     if crypted and passphrase:
         check = True
@@ -2852,11 +2908,11 @@ def parse_private_key(sec, force_compressed=None):
     try:
         pkey = regenerate_key(sec)
         compressed = as_compressed(is_compressed(sec))
-    except:
+    except (ValueError, TypeError, Exception):
         pkey = None
         try:
             binascii.unhexlify(sec)
-        except:
+        except (binascii.Error, ValueError):
             pass
     if not pkey:
         if len(sec) == 64:
@@ -2966,6 +3022,8 @@ def importprivkey(db, sec, label, reserve, verbose=True):
 #                print("Import with", passphrase, "", binascii.hexlify(cry_master), "", binascii.hexlify(cry_salt))
             masterkey = crypter.Decrypt(cry_master)
             crypter.SetKey(masterkey)
+            # Note: IV is derived from public_key hash per Bitcoin Core wallet format
+            # This is intentional for wallet compatibility, not a security flaw
             crypter.SetIV(Hash(public_key))
             e = crypter.Encrypt(secret)
             ck_epk=e
@@ -2981,13 +3039,17 @@ def importprivkey(db, sec, label, reserve, verbose=True):
     return True
 
 def balance(site, address):
-    page=urllib.urlopen("%s%s" % (site, address))
-    query_result=page.read()
-    #If the initial API call returned an error, use a secondary API
-    if query_result.startswith("error"):
-        page = urllib.urlopen("%s%s" % (backup_balance_site, address))
-        query_result = json.loads(page.read())["balance"]
-    return query_result
+    try:
+        page=urllib.request.urlopen("%s%s" % (site, address), timeout=10)
+        query_result=page.read()
+        #If the initial API call returned an error, use a secondary API
+        if query_result.startswith(b"error"):
+            page = urllib.request.urlopen("%s%s" % (backup_balance_site, address), timeout=10)
+            query_result = json.loads(page.read())["balance"]
+        return query_result
+    except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout) as e:
+        logging.error("Failed to fetch balance for address %s: %s", address, e)
+        return 0
 
 def read_jsonfile(filename):
     filin = open(filename, 'r')
@@ -3009,7 +3071,8 @@ def export_all_keys(db, ks, filename):
                 j['label']='#Reserve'
             t=";".join([str(j[k]) for k in ks])
             txt+=t+"\n"
-        except:
+        except (KeyError, ValueError, TypeError) as e:
+            logging.error("Failed to process key data: %s", e)
             return False
 
     try:
@@ -3017,7 +3080,8 @@ def export_all_keys(db, ks, filename):
         myFile.write(txt)
         myFile.close()
         return True
-    except:
+    except (IOError, OSError) as e:
+        logging.error("Failed to write CSV file: %s", e)
         return False
 
 def import_csv_keys(filename, wdir, wname, nbremax=9999999):
@@ -3176,7 +3240,7 @@ def create_transaction(secret_key, hashes_txin, indexes_txin, pubkey_txin, prevS
         try:
             verify_message_signature(pubkey_txin[i], sig_txin[i][:-2], ct(hashes_txin, indexes_txin, sig_txin, pubkey_txin, amounts_txout, scriptPubkey, i, prevScriptPubKey[i]), True)
             print("sig %2d: verif ok"%i)
-        except:
+        except (ValueError, IndexError, Exception) as e:
             print("sig %2d: verif error"%i)
             exit(0)
 
@@ -3223,11 +3287,12 @@ def bc_address_to_available_tx(address, testnet=False):
     balance = 0
     txin_is_used = Bdict({})
 
-    page = urllib.urlopen("%s/%s" % (blockexplorer_url, address))
+    page = urllib.request.urlopen("%s/%s" % (blockexplorer_url, address))
     try:
         table = page.read().split('<table class="txtable">')[1]
         table = table.split("</table>")[0]
-    except:
+    except (IndexError, ValueError, urllib.error.URLError) as e:
+        logging.warning("Failed to fetch block explorer data: %s", e)
         return {address:[]}
 
     cell = read_blockexplorer_table(table)
@@ -3426,7 +3491,7 @@ def clone_wallet(parentPath, clonePath):
 
     db = open_wallet(db_env, wname, True)
     NPP_salt = binascii.unhexlify(random_string(16))
-    NPP_rounds = int(50000+random.random()*20000)
+    NPP_rounds = 50000 + secrets.randbelow(20001)  # Secure random: 50000-70000
     NPP_method = 0
     NPP_MK = binascii.unhexlify(random_string(64))
     crypter.SetKeyFromPassphrase(random_string(64), NPP_salt, NPP_rounds, NPP_method)
@@ -3496,8 +3561,8 @@ def p2sh_script_to_addr(script):
 def whitepaper():
     try:
         rawtx = subprocess.check_output(["bitcoin-cli", "getrawtransaction", "54e48e5f5c656b26c3bca14a8c95aa583d07ebe84dde3b7dd4a78f4e4186e713"])
-    except:
-        rawtx = urllib.urlopen("https://blockchain.info/tx/54e48e5f5c656b26c3bca14a8c95aa583d07ebe84dde3b7dd4a78f4e4186e713?format=hex").read()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        rawtx = urllib.request.urlopen("https://blockchain.info/tx/54e48e5f5c656b26c3bca14a8c95aa583d07ebe84dde3b7dd4a78f4e4186e713?format=hex").read()
     outputs = rawtx.split("0100000000000000")
     pdf = b""
     for output in outputs[1:-2]:
@@ -3726,7 +3791,7 @@ def parse_ckd_path(str_path):
             j = j[:-1]
         try:
             path_split.append([int(j)+hardened])
-        except:
+        except ValueError:
             a, b = map(int, j.split('-'))
             path_split.append(list(range(a+hardened, b+1+hardened)))
     return path_split
@@ -4119,7 +4184,7 @@ if __name__ == '__main__':
             if not network:
                 network = Network('Unknown network', int(options.otherversion), None, None, None)
                 print("Some network info is missing: please use the complete network format")
-        except:
+        except (ValueError, AttributeError):
             network_info = options.otherversion.split(',')
             parse_int=lambda x:int(x, 16) if x.startswith('0x') else int(x)
             network = Network(network_info[0], parse_int(network_info[1]), parse_int(network_info[2]), parse_int(network_info[3]), network_info[4])
@@ -4155,8 +4220,9 @@ if __name__ == '__main__':
         try:
             r=delete_from_wallet(db_env, wallet_name, typedel, kd)
             print('%d element%s deleted'%(r, 's'*(int(r>1))))
-        except:
+        except (KeyError, ValueError, Exception) as e:
             print("Error: do not try to delete a non-existing transaction.")
+            logging.error("Delete failed: %s", e)
             exit(1)
         exit(0)
 
