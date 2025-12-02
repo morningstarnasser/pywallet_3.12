@@ -132,7 +132,9 @@ class Bdict(dict):
     def __repr__(self):
         return '%s(%s)'%(self.__class__.__name__, super(Bdict, self).__repr__())
 
-max_version = 81000
+# Increased max_version to support newer Bitcoin Core versions (up to ~200k)
+# Use --dont_check_walletversion to disable version check entirely
+max_version = 200000
 json_db = Bdict({})
 private_keys = []
 private_hex_keys = []
@@ -2812,7 +2814,51 @@ def read_wallet(json_db, db_env, walletfile, print_wallet, print_wallet_transact
         print("The wallet is not encrypted")
 
     if crypted and not passphrase:
-        print("The wallet is encrypted but no passphrase is used")
+        print("\n" + "="*70)
+        print("WALLET IS ENCRYPTED - No passphrase provided")
+        print("="*70)
+        print("\nExtractable information WITHOUT passphrase:")
+        print("-" * 70)
+
+        # Show Master Key information
+        if 'mkey' in json_db and json_db['mkey']:
+            mkey = json_db['mkey']
+            print("\n[MASTER KEY ENCRYPTION INFO]")
+            if 'salt' in mkey:
+                print(f"  Salt: {binascii.hexlify(mkey['salt']).decode()}")
+            if 'nDerivationIterations' in mkey:
+                print(f"  Iterations (rounds): {mkey['nDerivationIterations']}")
+            if 'nDerivationMethod' in mkey:
+                print(f"  Derivation method: {mkey['nDerivationMethod']}")
+            if 'encrypted_key' in mkey:
+                print(f"  Encrypted master key: {binascii.hexlify(mkey['encrypted_key']).decode()}")
+                print(f"  Encrypted master key length: {len(mkey['encrypted_key'])} bytes")
+
+        # Show encrypted keys with public keys and addresses
+        encrypted_key_count = 0
+        sample_keys = []
+        for k in json_db['keys']:
+            if 'encrypted_privkey' in k:
+                encrypted_key_count += 1
+                if len(sample_keys) < 3:  # Show first 3 as samples
+                    sample_keys.append(k)
+
+        print(f"\n[ENCRYPTED PRIVATE KEYS]")
+        print(f"  Total encrypted keys found: {encrypted_key_count}")
+
+        # Show sample encrypted keys
+        if sample_keys:
+            print(f"\n  Sample encrypted keys (showing first {len(sample_keys)}):")
+            for i, k in enumerate(sample_keys, 1):
+                print(f"\n  Key #{i}:")
+                print(f"    Address: {k.get('addr', 'N/A')}")
+                print(f"    Public key: {k.get('pubkey', b'').decode() if isinstance(k.get('pubkey', b''), bytes) else k.get('pubkey', 'N/A')}")
+                print(f"    Encrypted private key: {k.get('encrypted_privkey', b'').decode() if isinstance(k.get('encrypted_privkey', b''), bytes) else k.get('encrypted_privkey', 'N/A')}")
+                print(f"    Compressed: {k.get('compressed', 'N/A')}")
+
+        print("\n  Note: Private keys are encrypted. Provide passphrase with --passphrase to decrypt.")
+        print("  Public keys and addresses are still available (see dump output).")
+        print("\n" + "="*70 + "\n")
 
     if crypted and passphrase:
         check = True
