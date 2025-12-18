@@ -135,6 +135,22 @@ python3 pywallet.py -w wallet.dat --export csv --out keys.csv
 # 4) Versionskonflikt umgehen
 python3 pywallet.py -w wallet.dat --dont_check_walletversion -d
 
+### Windows GUI starten
+
+Wenn du lieber eine Oberfläche nutzen möchtest, starte die neue Tkinter-GUI:
+
+```cmd
+py -3 wallet_gui.py
+```
+
+**Funktionen:**
+
+- Wallet-Datei auswählen (wallet.dat)
+- Passphrase eingeben (optional)
+- Dump-Format wählen (`all`, `addr`, `keys`)
+- Version-Check überspringen (für neuere Wallet-Versionen)
+- Testlauf (keine Datei) oder Dump speichern
+
 ### Troubleshooting
 
 „The wallet is encrypted but no passphrase is used“
