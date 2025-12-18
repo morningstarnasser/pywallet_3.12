@@ -2,6 +2,18 @@
 
 ## ⚡ Schnellstart - 3 einfache Schritte
 
+### GUI-Variante (einfach)
+
+Wenn du eine Oberfläche bevorzugst, starte direkt:
+
+```cmd
+py -3 wallet_gui.py
+```
+
+Wähle deine `wallet.dat`, gib optional die Passphrase ein und starte entweder
+einen **Testlauf** (prüft Passphrase und Ausgabe ohne Datei) oder speichere den
+Dump in die gewünschte Datei. Für alle anderen Methoden siehe unten.
+
 ### Schritt 1: Dateien vorbereiten
 
 ```cmd
